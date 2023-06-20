@@ -1,0 +1,438 @@
+	EPIGENOMICS TASK (4 & 5)
+
+    MSc Omic Data Analysis - Epigenetics 
+    Mateo Pava
+
+##### Task 1
+
+# Create folders data & analyses to store the bigBed data and the peak analysis	files accordingly.
+
+mkdir analyses data
+
+cd analyses/ 
+
+mkdir peak.analysis 
+
+cd ../data/
+
+mkdir bigBed.files
+
+##### Task 2
+
+# Retrieve from a newly generated metadata file ATAC-seq peaks (bigBed narrow, pseudoreplicated peaks, assembly
+# GRCh38) for stomach and sigmoid_colon for the same donor used in the previous sections.
+
+# Went to Encode webpage and follow the previous task 3 hint
+# From this search we find 2 experiments. 
+
+# Download the metadata file, within the ATAC-seq folder. 
+cd ..
+../bin/download.metadata.sh "https://www.encodeproject.org/metadata/?replicates.library.biosample.donor.uuid=d370683e-81e7-473f-8475-7716d027849b&status=released&status=submitted&status=in+progress&assay_slims=DNA+accessibility&assay_title=ATAC-seq&biosample_ontology.term_name=sigmoid+colon&biosample_ontology.term_name=stomach&type=Experiment"
+
+
+# Explore the metadata file to see what files there are
+
+head -1 metadata.tsv
+
+# Check the columns of the metadata file to see which fields we are interested in
+
+head -1 metadata.tsv | awk 'BEGIN{FS=OFS="\t"}{for (i=1;i<=NF;i++){print $i, i}}'
+
+
+
+# Retrieve peaks (bigBed narrow, pseudoreplicated peaks, assembly GRCh38) for stomach and sigmoid_colon as the first task suggests
+# Find the files
+
+grep -F "bigBed_narrowPeak" metadata.tsv |grep -F "pseudoreplicated_peaks" |grep -F "GRCh38" |awk 'BEGIN{FS=OFS="\t"}{print $1, $11}' |sort -k2,2 -k1,1r |sort -k2,2 -u > analyses/bigBed.peaks.ids.txt
+
+# Now see the result txt
+cat analyses/bigBed.peaks.ids.txt
+
+ENCFF287UHP	sigmoid_colon	
+ENCFF762IFP	stomach	
+
+# In summary, this command pipeline extracts specific lines from the metadata.tsv file based on certain criteria, processes and sorts the extracted data, and finally saves the unique sorted results to the analyses/bigBed.peaks.ids.txt file
+
+# Now perform the cut, download and store the data
+
+cut -f1 analyses/bigBed.peaks.ids.txt |while read filename; do   wget -P data/bigBed.files "https://www.encodeproject.org/files/$filename/@@download/$filename.bigBed"; done
+
+
+# When downloading files, it's always advisable to check their integrity by verifying their MD5 hash.
+
+# retrieve original MD5 hash from the metadata
+../bin/selectRows.sh <(cut -f1 analyses/bigBed.peaks.ids.txt) metadata.tsv | cut -f1,46 > data/bigBed.files/md5sum.txt
+
+# ENCFF762IFP	f6a97407b6ba4697108e74451fb3eaf4
+# ENCFF287UHP	46f2ae76779da5be7de09b63d5c2ceb9
+
+
+# compute MD5 hash on the downloaded files
+
+cat data/bigBed.files/md5sum.txt |\
+while read filename original_md5sum; do 
+    md5sum data/bigBed.files/"$filename".bigBed |\
+    awk -v filename="$filename" -v original_md5sum="$original_md5sum" 'BEGIN{FS=" "; OFS="\t"}{print filename, 
+original_md5sum, $1}' 
+done > tmp 
+
+mv tmp data/bigBed.files/md5sum.txt
+
+# make sure there are no files for which original and computed MD5 hashes differ
+awk '$2!=$3' data/bigBed.files/md5sum.txt
+
+# There are no differences between the files
+
+##### Task 3
+
+# For each tissue, run an intersection analysis using BEDTools: report
+# 1) the number of peaks that intersect promoter regions
+# 2) the number of peaks that fall outside gene coordinates (whole gene body, not just the promoter regions)
+
+
+# Create a directory to store BED files: 
+mkdir data/bed.files
+
+# Convert the bigBed files to BED files with bigBedtoBed:
+cut -f1 analyses/bigBed.peaks.ids.txt |while read filename; do  bigBedToBed data/bigBed.files/"$filename".bigBed data/bed.files/"$filename".bed; done
+
+
+# Get file for annotations purposes, also note that the same file was used in class as gencode.v24.protein.coding.non.redundant.TSS.bed
+
+wget https://public-docs.crg.es/rguigo/Data/bborsari/UVIC/epigenomics_course/gencode.v24.protein.coding.non.redundant.TSS.bed
+
+mv ../ChIP-seq/annotation/gencode.v24.protein.coding.non.redundant.TSS.bed .
+
+#####
+
+# 1) the number of peaks that intersect promoter regions
+
+# Create a BED file for both samples that contains the peaks that fall inside the promoter regions 
+
+cut -f-2 analyses/bigBed.peaks.ids.txt |\
+while read filename tissue; do 
+  bedtools intersect -a data/bed.files/"$filename".bed -b gencode.v24.protein.coding.non.redundant.TSS.bed -u |\
+  cut -f1-4 |\
+  sort -u > analyses/peak.analysis/peaks.intersect.promoter."$tissue".ATAC.bed
+done	
+
+# By executing this command, it iterates over each line of the analyses/bigBed.peaks.ids.txt file, performs the specified operations for each line, and saves the resulting peaks that intersect with the promoter
+# regions in separate output files based on the tissue information.
+
+# Count the number of peaks:
+for tissue in stomach sigmoid_colon; do wc -l analyses/peak.analysis/peaks.intersect.promoter."$tissue".ATAC.bed; done
+
+# 44749 analyses/peak.analysis/peaks.intersect.promoter.stomach.ATAC.bed
+# 47871 analyses/peak.analysis/peaks.intersect.promoter.sigmoid_colon.ATAC.bed
+
+# By running this command, it counts the number of lines in each BED file and displays the results with their respective tissue labels. In this case, it shows the line counts for the "stomach" and "sigmoid_colon"
+# BED files that intersect with the promoter regions. 
+# Now retrieve	for unique genes.
+# Cut column 7 that has gene ids.
+
+
+cut -f-2 analyses/bigBed.peaks.ids.txt |\
+while read filename tissue; do    
+  bedtools intersect -a gencode.v24.protein.coding.non.redundant.TSS.bed -b data/bed.files/"$filename".bed -u |\
+  cut -f7 |\
+  sort -u > analyses/peak.analysis/genes.with.peaks.promoter."$tissue".ATAC.txt;
+done
+
+# Count the number of unique genes that contain peaks in the promoter regions: 
+for tissue in stomach sigmoid_colon; do wc -l analyses/peak.analysis/genes.with.peaks.promoter."$tissue".ATAC.txt; done
+
+# 15029 analyses/peak.analysis/genes.with.peaks.promoter.stomach.ATAC.txt
+# 14830 analyses/peak.analysis/genes.with.peaks.promoter.sigmoid_colon.ATAC.txt
+
+
+#####
+
+# 2) the number of peaks that fall outside gene coordinates (whole gene body, not just the promoter regions)
+
+# We will use the the annotation file created in class, named as
+# gencode.v24.protein.coding.gene.body.bed
+# This file is inside the ChIP-seq/annotation folder.
+
+cp ../ChIP-seq/annotation/gencode.v24.protein.coding.gene.body.bed .
+
+# Now report number of peaks that fall outside the body
+# We will use the option - v:  Only report those entries in A that have _no overlaps_ with B.
+
+cut -f-2 analyses/bigBed.peaks.ids.txt |\
+while read filename tissue; do 
+  bedtools intersect -a data/bed.files/"$filename".bed -b gencode.v24.protein.coding.gene.body.bed -v > analyses/peak.analysis/peaks.outside.gene.body."$tissue".bed; 
+done
+
+# Count the number of peaks that fall outside the gene body in each tissue:
+for tissue in stomach sigmoid_colon; do
+wc -l analyses/peak.analysis/peaks.outside.gene.body."$tissue".bed;
+done
+
+# 34537 analyses/peak.analysis/peaks.outside.gene.body.stomach.bed
+# 37035 analyses/peak.analysis/peaks.outside.gene.body.sigmoid_colon.bed
+
+
+
+# 5. Distal regulatory activity
+
+
+
+
+##### Task 1
+
+
+# Create a folder regulatory_elements inside epigenomics_uvic. This will be the folder where you store all your subsequent results.
+
+mkdir ../regulatory_elements
+
+
+##### Task 2
+
+# Distal regulatory regions are usually found to be flanked by both H3K27ac and H3K4me1. From your starting 
+# catalogue of open regions in each tissue, select those that overlap peaks of H3K27ac AND H3K4me1 in the 
+# corresponding tissue. You will get a list of candidate distal regulatory elements for each tissue. How many are
+# they?
+
+cd ../regulatory_elements
+
+# In order to search for H3K4me1 and H3K27ac peaks, we need the metadata file that we used in the Chip-seq 
+# experiment
+
+# Look for the pattern H3K4me1 and H3K27ac. Use the -e option after grep, which 
+# allows us to search for multiple patterns within the input. 
+
+grep -e H3K4me1 -e  H3K27ac metadata.tsv | grep -F "bigBed_narrowPeak" |grep -F "pseudoreplicated_peaks" |grep -F "GRCh38" |awk 'BEGIN{FS=OFS="\t"}{print $1, $11, $23}' | sort -k2,2 -k3,3 > bigBed.peaks.H3K27_H3K4me1.txt
+
+cat bigBed.peaks.H3K27_H3K4me1.txt
+
+# ENCFF683OKQ	sigmoid_colon	H3K27ac-human
+# ENCFF872UHN	sigmoid_colon	H3K27ac-human
+# ENCFF487CDU	sigmoid_colon	H3K4me1-human
+# ENCFF724ZOF	sigmoid_colon	H3K4me1-human
+# ENCFF932GIV	stomach	H3K27ac-human
+# ENCFF977LBD	stomach	H3K27ac-human
+# ENCFF372FFI	stomach	H3K4me1-human
+# ENCFF844XRN	stomach	H3K4me1-human
+
+
+# In total, there are 8 bigBed files. Among them, 2 are related to histone marks and 2 are specific to tissue types.
+# To maintain organization, let's create folders for the files we will generate from now on, similar to what we did before:
+
+# move the bigBed.peaks.H3K27_H3K4me1.txt to the analyses folder
+mv bigBed.peaks.H3K27_H3K4me1.txt analyses/
+
+
+# As before cut the first column of the generated file (bigBed.peaksH3k27_H3K4me1.txt),
+# because it contains the file_accession id and loop:
+cut -f1 analyses/bigBed.peaks.H3K27_H3K4me1.txt |while read filename; do   wget -P data/bigBed.files "https://www.encodeproject.org/files/$filename/@@download/$filename.bigBed"; done
+
+
+# Now check for integrity as done before
+# Retrieve original MD5 hash from the metadata
+
+../bin/selectRows.sh <(cut -f1 analyses/bigBed.peaks.H3K27_H3K4me1.txt) metadata.tsv | cut -f1,46 > data/bigBed.files/md5sum.txt
+
+cat data/bigBed.files/md5sum.txt 
+
+# ENCFF977LBD	be29636550527e36c4755ea036531e75
+# ENCFF932GIV	bd0e4fb32885bd11d872e8cda271fb0f
+# ENCFF872UHN	2207b7b3378df7776e7ecdc2aa1a5de0
+# ENCFF683OKQ	135283355fcf52550ade025d45cb1c99
+# ENCFF487CDU	1ef263706e951b207db41acebc0c30f4
+# ENCFF724ZOF	c87fefbf41de3d291fa1d340a26627f5
+# ENCFF844XRN	de679228721fb4055aa1f657c77c21a6
+# ENCFF372FFI	df47bfc7460272f3aed67502d08d3655
+
+
+# compute MD5 hash on the downloaded files
+
+cat data/bigBed.files/md5sum.txt |\
+
+while read filename original_md5sum; do 
+    md5sum data/bigBed.files/"$filename".bigBed |\
+    awk -v filename="$filename" -v original_md5sum="$original_md5sum" 'BEGIN{FS=" "; OFS="\t"}{print filename, 
+original_md5sum, $1}' 
+done > tmp 
+
+mv tmp data/bigBed.files/md5sum.txt
+
+# make sure there are no files for which original and computed MD5 hashes differ
+awk '$2!=$3' data/bigBed.files/md5sum.txt
+
+# No differences between files again
+
+# Follow the same structure as before and organize files in a new directory
+
+mkdir data/bed.files
+
+# Now convert bigBed files to BED files and store them 
+
+cut -f1 analyses/bigBed.peaks.H3K27_H3K4me1.txt |while read filename; do  bigBedToBed data/bigBed.files/"$filename".bigBed data/bed.files/"$filename".bed; done
+
+
+
+# Our starting point to build the catalogue of distal regulatory regions is the file generated in the ATAC-seq
+# experiment. --> peaks.outside.gene.body."$tissue".bed
+# Use bedtools intersect to select overlap peaks of H3K27ac and H3K4me1 in each tissue.
+
+# Intersect ATAC-seq peaks with methylation and acethylation peaks.
+
+# Select H3K27 acethylation for all tissues, and do a bedtools intersect of this histone mark by tissue.
+
+awk '$3=="H3K27ac-human"{print $1, $2}' analyses/bigBed.peaks.H3K27_H3K4me1.txt | while read filename tissue; do bedtools intersect -a ../ATAC-seq/analyses/peak.analysis/peaks.outside.gene.body."$tissue".bed -b data/bed.files/"$filename".bed -u > analyses/peaks.analysis/peaks.H3K27."$tissue".bed;done
+
+# Select H3K4me1 acethylation for all tissues, and do a bedtools intersect of this histone mark by tissue.
+
+awk '$3=="H3K4me1-human"{print $1, $2}' analyses/bigBed.peaks.H3K27_H3K4me1.txt | while read filename tissue; do bedtools intersect -a ../ATAC-seq/analyses/peak.analysis/peaks.outside.gene.body."$tissue".bed -b data/bed.files/"$filename".bed -u > analyses/peaks.analysis/peaks.H3K4me1."$tissue".bed;done
+
+
+for tissue in stomach sigmoid_colon; do
+bedtools intersect -a analyses/peaks.analysis/peaks.H3K27."$tissue".bed  -b 
+analyses/peaks.analysis/peaks.H3K4me1."$tissue".bed -u > analyses/peaks.analysis/peaks_H3K27_H3K4me1."$tissue".bed 
+done
+
+# Count: 
+for tissue in stomach sigmoid_colon; do wc -l analyses/peaks.analysis/peaks_H3K27_H3K4me1."$tissue".bed; done
+
+# 8022 analyses/peaks.analysis/peaks_H3K27_H3K4me1.stomach.bed
+# 14215 analyses/peaks.analysis/peaks_H3K27_H3K4me1.sigmoid_colon.bed
+
+
+##### Task 3
+
+# Focus on regulatory elements that are located on chromosome 1 
+# (hint: to parse a file based on the value of a specific column, have a look at what we did here), and generate a file regulatory.elements.starts.tsv 
+# that contains the name of the regulatory region (i.e. the name of the original ATAC-seq peak) and the start (5') coordinate of the region.
+
+# For organization purposes create folder.
+mkdir chr1
+
+# Visuallize the file to find how to filter: 
+head -1 analyses/peaks.analysis/peaks_H3K27_H3K4me1.stomach.bed 
+
+# chr1	1067682	1068269	Peak_25860	249	.	3.88170	24.92832	22.14262	271
+
+# Columns 2 and 4 are the needed.
+
+for tissue in stomach sigmoid_colon; do awk '$1=="chr1" {print $4, $2}' analyses/peaks.analysis/peaks_H3K27_H3K4me1."$tissue".bed > chr1/regulatory.elements.starts."$tissue".tsv; done
+
+# count them: 
+for tissue in stomach sigmoid_colon; do wc -l chr1/regulatory.elements.starts."$tissue".tsv; done
+
+# 987 chr1/regulatory.elements.starts.stomach.tsv
+# 1521 chr1/regulatory.elements.starts.sigmoid_colon.tsv
+
+987 stomach and 1521 sigmoid_colon regulatory elements for chromosome 1. 
+
+
+##### Task 4
+
+# Focus on protein-coding genes located on chromosome 1. 
+# From the BED file of gene body coordinates that you generated here, prepare a tab-separated file called gene.starts.tsv which will store
+# the name of the gene in the first column, and the start coordinate of the gene on the second column (REMEMBER: for genes located on the minus strand, 
+# the start coordinate will be at the 3'). Use the command below as a starting point:
+
+# Visualize
+head -1 ../ATAC-seq/gencode.v24.protein.coding.gene.body.bed 
+# chr1	69090	70008	ENSG00000186092.4	0	+	ENSG00000186092.4
+
+# Strand is in column 6, and the start coordinates in 2 (+ strands) and 3 (- strands).
+# Create a file with the gene name in column 1 and the start coordinate in column 2: 
+
+awk 'BEGIN{FS=OFS="\t"}$1=="chr1"{if ($6=="+"){start=$2} else {start=$3}; print $4, start}' ../ATAC-seq/gencode.v24.protein.coding.gene.body.bed > gene.starts.tsv
+
+##### Task 5
+
+# Download or copy this python script inside the epigenomics_uvic/bin folder. Have a look at the help page of this
+# script to understand how it works.
+
+nano ../bin/get.distance.py
+
+# To look at the page help: 
+python ../bin/get.distance.py -h
+
+Options:
+  -h, --help            show this help message and exit
+  -i INPUT, --input=INPUT
+  -s START, --start=START
+
+# In summary, by providing the input file (gene.starts.tsv) and the 5' coordinate of a regulatory element to the script, 
+# it will output the closest gene, its start position, and the distance between the regulatory element and the gene.
+
+### Code added in the get.distance.py script ##
+#################################################
+position = int(y)       
+diff_abs_value = abs(position-enhancer_start) 
+if diff_abs_value < x: 
+           x=diff_abs_value 
+           selectedGene = gene 
+           selectedGeneStart = position 
+##############################################
+
+
+# To make sure your script is working fine, run the following command:
+python ../bin/get.distance.py --input gene.starts.tsv --start 980000
+
+# Output:
+
+# ENSG00000187642.9	982093	2093
+
+
+
+##### Task 6
+
+# For each regulatory element contained in the file regulatory.elements.starts.tsv, retrieve the closest gene and 
+# the distance to the closest gene using the python script you created above. Use the command below as a starting
+# point:
+
+for tissue in stomach sigmoid_colon; do cat chr1/regulatory.elements.starts."$tissue".tsv | while read element start; do python ../bin/get.distance.py --input gene.starts.tsv --start "$start"; done > chr1/regulatoryElements.genes.distances."$tissue".tsv; done
+
+head -n1 chr1/regulatoryElements.genes.distances.*.tsv
+
+# ==> chr1/regulatoryElements.genes.distances.sigmoid_colon.tsv <==
+# ENSG00000187634.10	924879	107583
+
+# ==> chr1/regulatoryElements.genes.distances.stomach.tsv <==
+# ENSG00000237330.2	1074307	6625
+
+# For each tissue type, the script reads the coordinates of regulatory elements for a particular chromosome, calculates the distance between each regulatory element and the start of each gene (using the Python
+# script), and writes the output to a separate file.
+
+##### Task 7
+
+# Use R to compute the mean and the median of the distances stored the obtain tsv.
+
+# Type R to open R in the terminal 
+
+# Define your vector of tissue types
+tissue_types <- c("stomach", "sigmoid_colon")
+
+# Loop through each tissue type
+for (tissue in tissue_types) {
+  # Construct the filename
+  file_name <- paste0("chr1/regulatoryElements.genes.distances.", tissue, ".tsv")
+  
+  # Read the data
+  data <- read.table(file_name, header = FALSE, sep = "\t", col.names = c("element", "start", "distance"))
+  
+  # Calculate median and mean
+  median_val <- median(data$distance)
+  mean_val <- mean(data$distance)
+  
+  # Print the results
+  cat("Tissue:", tissue, "\n")
+  cat("Median:", median_val, "\n")
+  cat("Mean:", mean_val, "\n")
+}
+
+# Output: 
+[1] "Tissue: stomach"
+[1] "Median: 27735"
+[1] "Mean: 45227.0486322188"
+
+[1] "Tissue: sigmoid_colon"
+[1] "Median: 35802"
+[1] "Mean: 73635.8948060487"
+
+
+quit()
